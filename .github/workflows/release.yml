@@ -13,6 +13,8 @@ name: Release
 on:
   push:
     branches: [master]
+  # Run by hand to retry a release whose run failed or never started.
+  workflow_dispatch:
 
 permissions:
   contents: read
