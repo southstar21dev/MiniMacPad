@@ -57,9 +57,11 @@ jobs:
           fi
           read -r version build <<< "$(scripts/version.sh "v$(cat .release-version)")"
           echo "Releasing $version (build $build)" >> "$GITHUB_STEP_SUMMARY"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "build=$build"
+            echo "commit=$(git rev-parse --short "$GITHUB_SHA")"
+          } >> "$GITHUB_OUTPUT"
 
   mac:
     needs: plan
@@ -89,6 +91,8 @@ jobs:
           security unlock-keychain -p "$keychain_password" "$keychain"
           security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          # The existing keychains are a list: split on purpose.
+          # shellcheck disable=SC2046
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       - name: Build
