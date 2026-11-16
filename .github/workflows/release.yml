@@ -1,0 +1,152 @@
+name: Release
+
+# docs/RELEASING.md. semantic-release on master, as in the other southstar21dev apps:
+#
+#   push to master   a dry run picks the version from the Conventional Commits since the last tag
+#                    (fix:/perf: patch, feat: minor, `!` or BREAKING CHANGE: major; chore:, docs:,
+#                    refactor: etc. release nothing). The app is built and signed with it, and only
+#                    then is the tag vX.Y.Z and the GitHub release created, so a failed build never
+#                    leaves a release. Nothing is committed back to master.
+#
+# The update manifest, minimacpad-update.json, is attached last: the in-app updater ignores a
+# release until it has one, so it never sees a manifest whose file isn't uploaded yet.
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SEMANTIC_RELEASE: semantic-release@25.0.9 @semantic-release/exec@7.1.0 conventional-changelog-conventionalcommits@8.0.0
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      # The dry run checks that it could push the tag.
+      contents: write
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+      commit: ${{ steps.v.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Decide the version
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # $SEMANTIC_RELEASE is a list of packages: split on purpose.
+          # shellcheck disable=SC2086
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/semrel" $SEMANTIC_RELEASE
+          "$RUNNER_TEMP/semrel/node_modules/.bin/semantic-release" --dry-run
+      - id: v
+        run: |
+          if [ ! -f .release-version ]; then
+            echo "No release-worthy commits since the last tag." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          read -r version build <<< "$(scripts/version.sh "v$(cat .release-version)")"
+          echo "Releasing $version (build $build)" >> "$GITHUB_STEP_SUMMARY"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+
+  mac:
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    runs-on: macos-26
+    env:
+      MINIMACPAD_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+      BUILD: ${{ needs.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Signing identity
+        env:
+          P12_BASE64: ${{ secrets.MAC_SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MAC_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$P12_BASE64" ]; then
+            echo "::error::MAC_SIGNING_P12_BASE64 is not set; see docs/RELEASING.md"
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          echo "$P12_BASE64" | base64 -d > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+      - name: Build
+        run: scripts/bundle.sh --no-install
+      - name: Check the signature and zip
+        run: |
+          app=target/MiniMacPad.app
+          codesign --verify --deep --strict "$app"
+          # Installed copies only accept updates signed with this certificate (docs/RELEASING.md).
+          codesign -d -r- "$app" 2>&1 | grep 'certificate leaf = H"005cffe3fb8b05e46399d3578d604fa4d5b3e4f0"'
+          mkdir dist
+          ditto -c -k --keepParent "$app" "dist/MiniMacPad-${MINIMACPAD_RELEASE_VERSION}-${BUILD}-mac.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: dist/
+
+  publish:
+    needs: [plan, mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      BUILD: ${{ needs.plan.outputs.build }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Manifest
+        run: |
+          mkdir manifest
+          zip="MiniMacPad-${VERSION}-${BUILD}-mac.zip"
+          jq -n --arg version "$VERSION" --argjson build "$BUILD" --arg commit "$COMMIT" \
+            --arg zip "$zip" --arg zip_sha "$(sha256sum "release-assets/$zip" | cut -d' ' -f1)" \
+            '{version: $version, build: $build, commit: $commit, mac: {file: $zip, sha256: $zip_sha}}' \
+            > manifest/minimacpad-update.json
+          cat manifest/minimacpad-update.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Tag and publish the GitHub release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # shellcheck disable=SC2086
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/semrel" $SEMANTIC_RELEASE
+          "$RUNNER_TEMP/semrel/node_modules/.bin/semantic-release"
+          released="$(cat .release-version 2>/dev/null || true)"
+          if [ "$released" != "$VERSION" ]; then
+            echo "::error::Planned $VERSION but released '${released:-nothing}' (did master move?)."
+            exit 1
+          fi
+      - name: Attach the manifest
+        run: gh release upload "v$VERSION" manifest/minimacpad-update.json --clobber --repo "$GITHUB_REPOSITORY"

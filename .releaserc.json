@@ -1,0 +1,18 @@
+{
+  "branches": ["master"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    ["@semantic-release/commit-analyzer", { "preset": "conventionalcommits" }],
+    ["@semantic-release/release-notes-generator", { "preset": "conventionalcommits" }],
+    ["@semantic-release/exec", { "verifyReleaseCmd": "echo ${nextRelease.version} > .release-version" }],
+    ["@semantic-release/github", {
+      "assets": [
+        { "path": "release-assets/*-mac.zip", "label": "MiniMacPad ${nextRelease.version} for Mac" }
+      ],
+      "releaseNameTemplate": "MiniMacPad <%= nextRelease.version %>",
+      "successComment": false,
+      "failComment": false,
+      "releasedLabels": false
+    }]
+  ]
+}

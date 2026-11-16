@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><title>MiniPad device</title><defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4AA3FF"/><stop offset="1" stop-color="#0A6FE6"/></linearGradient><linearGradient id="cap" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#EDEDF0"/></linearGradient><linearGradient id="knob" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F4F4F6"/><stop offset="1" stop-color="#B4B4BA"/></linearGradient><linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#343437"/><stop offset="1" stop-color="#222225"/></linearGradient></defs>
+<rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tile)"/>
+<g transform="rotate(-10 512 512)">
+<rect x="332" y="172" width="360" height="680" rx="46" fill="url(#body)" stroke="#55555A" stroke-width="5"/>
+<circle cx="360" cy="200" r="8" fill="#8E8E93"/><circle cx="360" cy="824" r="8" fill="#8E8E93"/><circle cx="664" cy="200" r="8" fill="#8E8E93"/><circle cx="664" cy="824" r="8" fill="#8E8E93"/>
+<rect x="492" y="350" width="40" height="468" rx="20" fill="#FF453A" opacity="0.28"/>
+<rect x="506" y="350" width="12" height="468" rx="6" fill="#FF5A4F"/>
+<rect x="356" y="356" width="140" height="140" rx="22" fill="#BFBFC5"/><rect x="366" y="363" width="120" height="116" rx="15" fill="url(#cap)"/><rect x="528" y="356" width="140" height="140" rx="22" fill="#BFBFC5"/><rect x="538" y="363" width="120" height="116" rx="15" fill="url(#cap)"/><rect x="356" y="514" width="140" height="140" rx="22" fill="#BFBFC5"/><rect x="366" y="521" width="120" height="116" rx="15" fill="url(#cap)"/><rect x="528" y="514" width="140" height="140" rx="22" fill="#BFBFC5"/><rect x="538" y="521" width="120" height="116" rx="15" fill="url(#cap)"/><rect x="356" y="672" width="140" height="140" rx="22" fill="#BFBFC5"/><rect x="366" y="679" width="120" height="116" rx="15" fill="url(#cap)"/><rect x="528" y="672" width="140" height="140" rx="22" fill="#BFBFC5"/><rect x="538" y="679" width="120" height="116" rx="15" fill="url(#cap)"/>
+<circle cx="512" cy="262" r="64" fill="#85858B"/>
+<circle cx="512" cy="262" r="52" fill="url(#knob)"/>
+<circle cx="512" cy="262" r="30" fill="none" stroke="#A9A9AF" stroke-width="3"/>
+<rect x="507" y="210" width="10" height="24" rx="5" fill="#FFFFFF"/>
+</g></svg>

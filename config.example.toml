@@ -1,0 +1,43 @@
+# MiniMacPad config. Saved changes apply on the next key press; no restart needed.
+#
+# Controls: key1 .. key6, knob_left, knob_right, knob_press
+# (run `minipad monitor` to see which physical key is which)
+#
+# Actions:
+#   { open = "Safari" }                 launch or focus an app
+#   { url = "https://claude.ai" }       open a URL
+#   { shell = "say hello" }             run any shell command
+#   { keys = "cmd+shift+4" }            press a shortcut
+#   { volume = 4 }                      volume up 4% (negative = down)
+#   { mute = true }                     toggle mute
+#   { notify = "text" }                 show a notification
+#   { ask = "prompt" }                  ask an AI assistant; see options below
+#   [ {...}, {...} ]                    several actions, run in order
+#
+# Assistant options:
+#   with   = "claude" (default) | "antigravity"              runs in the background
+#          | "claude-app" | "chatgpt" | "gemini" | "antigravity-app"
+#            desktop apps: brought forward, new chat, prompt pasted, return pressed
+#   input  = "none" (default) | "clipboard" | "selection"    text sent with the prompt
+#   output = "clipboard" (default) | "paste" | "terminal"    background assistants only:
+#            where the answer goes; "terminal" opens an interactive session instead
+#   shortcut = "cmd+n"   desktop apps only: keys pressed before pasting ("" for none)
+
+[keys]
+key1 = { open = "Safari" }
+key2 = { open = "Terminal" }
+key3 = { ask = "Explain this briefly and plainly.", input = "selection" }
+key4 = { ask = "Fix spelling and grammar. Reply with only the corrected text.", input = "selection", output = "paste" }
+key5 = { ask = "Summarise this.", with = "chatgpt", input = "clipboard" }
+key6 = { keys = "cmd+shift+4" }
+
+knob_left = { volume = -4 }
+knob_right = { volume = 4 }
+knob_press = { mute = true }
+
+# Per-app overrides: use the app's name as shown in the menu bar.
+# Anything not listed here falls back to [keys].
+#
+# [apps.Safari]
+# knob_left = { keys = "cmd+shift+[" }    # previous tab
+# knob_right = { keys = "cmd+shift+]" }   # next tab

@@ -1,0 +1,27 @@
+[package]
+name = "minipad"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+hidapi = "2"
+rusb = { version = "0.9", features = ["vendored"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+serde_json = "1"
+eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts"] }
+
+[[bin]]
+name = "minipad"
+path = "src/main.rs"
+
+[[bin]]
+name = "minipad-ui"
+path = "src/ui.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
