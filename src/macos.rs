@@ -41,12 +41,22 @@ extern "C" {
 #[link(name = "IOKit", kind = "framework")]
 extern "C" {
     fn IOHIDRequestAccess(request: u32) -> bool;
+    fn IOHIDCheckAccess(request: u32) -> u32;
 }
 
+/// kIOHIDRequestTypeListenEvent: reading key presses (Input Monitoring).
+const LISTEN_EVENT: u32 = 1;
+
 /// Ask macOS for permission to read key presses (Input Monitoring). Shows the
-/// system prompt the first time; returns whether access is granted.
+/// system prompt the first time and lists this program under Input Monitoring;
+/// returns whether access is granted.
 pub fn request_input_monitoring() -> bool {
-    unsafe { IOHIDRequestAccess(1) }
+    unsafe { IOHIDRequestAccess(LISTEN_EVENT) }
+}
+
+/// Whether this program may read key presses, without prompting.
+pub fn input_monitoring_granted() -> bool {
+    unsafe { IOHIDCheckAccess(LISTEN_EVENT) == 0 } // kIOHIDAccessTypeGranted
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]

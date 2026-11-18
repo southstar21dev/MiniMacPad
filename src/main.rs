@@ -1,6 +1,6 @@
 use hidapi::HidApi;
 use minipad::device::{self, Event};
-use minipad::{actions, config, flash, service};
+use minipad::{actions, config, flash, macos, service};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -51,9 +51,17 @@ fn daemon() -> Result<(), String> {
     let mut api = HidApi::new().map_err(|e| e.to_string())?;
     let mut store = config::Store::load();
     let mut front: (Instant, Option<String>) = (Instant::now(), None);
-    let mut complained = false;
+    // Ask for Input Monitoring ourselves: this lists the daemon in Privacy
+    // settings and shows the prompt, instead of failing silently.
+    if !macos::input_monitoring_granted() && !macos::request_input_monitoring() {
+        eprintln!("Input Monitoring is off for {}; allow it in System Settings", service::bin_path());
+    }
+    let mut last: Option<service::Status> = None;
     loop {
-        let opened = device::pump(&mut api, false, || {}, |event| {
+        let result = device::pump(&mut api, false, || {
+            service::write_status(service::Status::Connected);
+            last = Some(service::Status::Connected);
+        }, |event| {
             if !event.pressed || config::paused() {
                 return;
             }
@@ -75,12 +83,24 @@ fn daemon() -> Result<(), String> {
                 actions::dispatch(control, binding.actions(), bin);
             }
         });
-        if !opened && !complained {
-            eprintln!("waiting for the pad…");
-            complained = true;
-        }
-        if opened {
-            complained = false;
+        // Log and record only changes, so a lasting problem is one log line.
+        let (status, errs) = match result {
+            Ok(()) => (service::Status::NoPad, Vec::new()),
+            Err(errs) if errs.is_empty() => (service::Status::NoPad, errs),
+            Err(errs) => (service::Status::Blocked, errs),
+        };
+        if last != Some(status) {
+            match status {
+                service::Status::Blocked => {
+                    for e in &errs {
+                        eprintln!("cannot open pad: {e}");
+                    }
+                    eprintln!("allow {} under Input Monitoring in System Settings", service::bin_path());
+                }
+                _ => eprintln!("waiting for the pad…"),
+            }
+            service::write_status(status);
+            last = Some(status);
         }
         sleep(Duration::from_secs(2));
     }
@@ -89,10 +109,14 @@ fn daemon() -> Result<(), String> {
 fn monitor(raw: bool) -> Result<(), String> {
     let mut api = HidApi::new().map_err(|e| e.to_string())?;
     println!("press keys and turn the knob (ctrl-c to stop)");
-    let opened = device::pump(&mut api, raw, || {}, |event: Event| {
+    let result = device::pump(&mut api, raw, || {}, |event: Event| {
         if event.pressed {
             println!("{}", event.control);
         }
     });
-    if opened { Ok(()) } else { Err("pad not found or not accessible".into()) }
+    match result {
+        Ok(()) => Ok(()),
+        Err(errs) if errs.is_empty() => Err("pad not found".into()),
+        Err(errs) => Err(format!("pad not accessible (allow this program under Input Monitoring): {}", errs.join("; "))),
+    }
 }
