@@ -92,6 +92,12 @@ fn apply_theme(ctx: &egui::Context) {
     });
 }
 
+/// Open System Settings at Privacy & Security > Input Monitoring.
+fn open_input_monitoring() {
+    let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
+    let _ = std::process::Command::new("open").arg(url).spawn();
+}
+
 /// Small grey explanatory text.
 fn note(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.label(RichText::new(text).small().color(DIM));
@@ -510,6 +516,8 @@ struct App {
     /// One of the PAD_* states below.
     pad: Arc<AtomicU8>,
     daemon_running: Arc<AtomicBool>,
+    /// What the background service last reported; None if it has not said.
+    service_status: Arc<Mutex<Option<service::Status>>>,
     message: String,
 }
 
@@ -537,7 +545,7 @@ impl App {
         std::thread::spawn(move || {
             let Ok(mut api) = HidApi::new() else { return };
             loop {
-                device::pump(&mut api, false, || flag.store(PAD_CONNECTED, Ordering::Relaxed), |event| {
+                let _ = device::pump(&mut api, false, || flag.store(PAD_CONNECTED, Ordering::Relaxed), |event| {
                     let _ = tx.send(event);
                     ctx.request_repaint();
                 });
@@ -549,10 +557,12 @@ impl App {
             }
         });
 
-        let flag = daemon_running.clone();
+        let service_status = Arc::new(Mutex::new(service::read_status()));
+        let (flag, status) = (daemon_running.clone(), service_status.clone());
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_secs(2));
             flag.store(service::running(), Ordering::Relaxed);
+            *status.lock().unwrap() = service::read_status();
         });
 
         // Keep a login-item daemon in step with this app, then look for a newer release.
@@ -577,6 +587,7 @@ impl App {
             scale: 1.0,
             pad,
             daemon_running,
+            service_status,
             message,
         }
     }
@@ -598,13 +609,42 @@ impl App {
         }
     }
 
+    /// True if the background service is running but macOS will not let it
+    /// read the pad, so presses do nothing outside this window.
+    fn service_blocked(&self) -> bool {
+        self.daemon_running.load(Ordering::Relaxed)
+            && *self.service_status.lock().unwrap() == Some(service::Status::Blocked)
+    }
+
+    /// Explain the blocked service and offer the way out: the Input Monitoring
+    /// list, the program to put in it, and a restart once it is allowed.
+    fn service_blocked_notice(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("macOS is hiding key presses from the background service").color(WARN));
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Allow in Settings…").clicked() {
+                open_input_monitoring();
+                let _ = std::process::Command::new("open").args(["-R", &service::bin_path()]).spawn();
+            }
+            if service::installed() && ui.button("Restart Service").clicked() {
+                let result = service::restart();
+                self.report("Background service restarted", result);
+            }
+        });
+        note(ui, "Under Input Monitoring, turn on minipad. If it is not listed, click +, \
+            press Cmd+Shift+G and enter ~/.local/bin/minipad (it is also shown in the Finder window). \
+            Then click Restart Service.");
+    }
+
     /// Test switch and the hints shown under the pad picture.
     fn pad_footer(&mut self, ui: &mut egui::Ui) {
+        if self.service_blocked() {
+            self.service_blocked_notice(ui);
+            ui.add_space(6.0);
+        }
         if self.pad.load(Ordering::Relaxed) == PAD_BLOCKED {
             ui.label(RichText::new("macOS is hiding key presses from MiniMacPad").color(WARN));
             if ui.button("Open Privacy Settings…").clicked() {
-                let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
-                let _ = std::process::Command::new("open").arg(url).spawn();
+                open_input_monitoring();
             }
             note(ui, "Turn MiniMacPad on under Input Monitoring, then reopen the app.");
             return;
@@ -884,8 +924,7 @@ impl App {
                         _ => "Not plugged in",
                     });
                     if pad == PAD_BLOCKED && ui.button("Open Privacy Settings…").clicked() {
-                        let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
-                        let _ = std::process::Command::new("open").arg(url).spawn();
+                        open_input_monitoring();
                     }
                 });
 
@@ -906,6 +945,10 @@ impl App {
                         };
                         self.report("Background service started", result);
                     }
+                    if login && running && ui.button("Restart").clicked() {
+                        let result = service::restart();
+                        self.report("Background service restarted", result);
+                    }
                     if (login || running) && ui.button("Stop").clicked() {
                         let result = service::uninstall();
                         self.report("Background service stopped", result);
@@ -914,6 +957,9 @@ impl App {
                         let _ = std::process::Command::new("open").arg(service::log_path()).spawn();
                     }
                 });
+                if self.service_blocked() {
+                    self.service_blocked_notice(ui);
+                }
 
                 caption(ui, "Backlight");
                 ui.horizontal_wrapped(|ui| {

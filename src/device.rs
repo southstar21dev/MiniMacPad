@@ -131,15 +131,18 @@ pub fn read_loop(dev: HidDevice, tx: Sender<Event>, raw: bool) {
 }
 
 /// Open the pad and feed its events to `handle` until it is unplugged.
-/// `on_connect` runs once the pad is open. Returns false if it could not be opened.
-pub fn pump(api: &mut HidApi, raw: bool, on_connect: impl FnOnce(), mut handle: impl FnMut(Event)) -> bool {
+/// `on_connect` runs once the pad is open. If it could not be opened, returns
+/// why: no errors means the pad is not plugged in.
+pub fn pump(
+    api: &mut HidApi,
+    raw: bool,
+    on_connect: impl FnOnce(),
+    mut handle: impl FnMut(Event),
+) -> Result<(), Vec<String>> {
     let _ = api.refresh_devices();
     let (devs, errs) = open_all(api);
     if devs.is_empty() {
-        for e in errs {
-            eprintln!("cannot open pad: {e}");
-        }
-        return false;
+        return Err(errs);
     }
     let (tx, rx) = channel();
     for dev in devs {
@@ -153,5 +156,5 @@ pub fn pump(api: &mut HidApi, raw: bool, on_connect: impl FnOnce(), mut handle: 
         handle(event);
     }
     eprintln!("pad disconnected");
-    true
+    Ok(())
 }

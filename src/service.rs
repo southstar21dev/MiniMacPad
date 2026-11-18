@@ -22,6 +22,65 @@ fn uid() -> String {
     String::from_utf8_lossy(&out).trim().to_string()
 }
 
+/// Where the login item's copy of the daemon lives. This program, not the
+/// app, is what macOS must allow under Input Monitoring.
+pub fn bin_path() -> String {
+    format!("{}/.local/bin/minipad", home())
+}
+
+/// What the running daemon last found when it tried to read the pad.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Status {
+    Connected,
+    NoPad,
+    /// Plugged in, but macOS will not let the daemon read it (Input Monitoring).
+    Blocked,
+}
+
+impl Status {
+    fn word(self) -> &'static str {
+        match self {
+            Status::Connected => "connected",
+            Status::NoPad => "no-pad",
+            Status::Blocked => "blocked",
+        }
+    }
+
+    fn parse(word: &str) -> Option<Status> {
+        [Status::Connected, Status::NoPad, Status::Blocked].into_iter().find(|s| s.word() == word.trim())
+    }
+}
+
+fn status_path() -> std::path::PathBuf {
+    crate::config::path().with_file_name("service-status")
+}
+
+/// Record the daemon's state for the settings app.
+pub fn write_status(status: Status) {
+    let path = status_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, status.word());
+}
+
+/// The daemon's last recorded state, if it has written one.
+pub fn read_status() -> Option<Status> {
+    std::fs::read_to_string(status_path()).ok().and_then(|s| Status::parse(&s))
+}
+
+/// Restart the login-item daemon, for example after allowing it in Privacy settings.
+pub fn restart() -> Result<(), String> {
+    let out = Command::new("launchctl")
+        .args(["kickstart", "-k", &format!("gui/{}/{LABEL}", uid())])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!("launchctl: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(())
+}
+
 /// True if the login item is set up.
 pub fn installed() -> bool {
     Path::new(&plist_path()).exists()
@@ -36,7 +95,7 @@ pub fn running() -> bool {
 /// replacing any daemon that is already running.
 pub fn install(exe: &Path) -> Result<(), String> {
     let home = home();
-    let bin = format!("{home}/.local/bin/minipad");
+    let bin = bin_path();
     std::fs::create_dir_all(format!("{home}/.local/bin")).map_err(|e| e.to_string())?;
     if exe.to_string_lossy() != bin {
         let _ = std::fs::remove_file(&bin);
@@ -76,7 +135,7 @@ pub fn install(exe: &Path) -> Result<(), String> {
 /// If the login item is set up but runs an older daemon than the one at
 /// `exe` (the app was updated), replace it.
 pub fn sync(exe: &Path) {
-    let installed_bin = format!("{}/.local/bin/minipad", home());
+    let installed_bin = bin_path();
     if installed() && exe.exists() && std::fs::read(exe).ok() != std::fs::read(&installed_bin).ok() {
         if let Err(e) = install(exe) {
             eprintln!("could not update the background service: {e}");
@@ -88,6 +147,7 @@ pub fn sync(exe: &Path) {
 pub fn uninstall() -> Result<(), String> {
     let _ = Command::new("launchctl").args(["bootout", &format!("gui/{}/{LABEL}", uid())]).output();
     let _ = std::fs::remove_file(plist_path());
+    let _ = std::fs::remove_file(status_path());
     let _ = Command::new("pkill").args(["-x", "minipad"]).output();
     println!("removed login item");
     Ok(())
