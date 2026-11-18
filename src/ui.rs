@@ -6,6 +6,7 @@ use hidapi::HidApi;
 use minipad::config::{self, Action, Binding, Config};
 use minipad::device::{self, Event};
 use minipad::update::{self, Release};
+use minipad::pad::{self, Backlight, Effect, Firmware};
 use minipad::{actions, flash, macos, service};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -518,7 +519,24 @@ struct App {
     daemon_running: Arc<AtomicBool>,
     /// What the background service last reported; None if it has not said.
     service_status: Arc<Mutex<Option<service::Status>>>,
+    /// Which firmware the plugged-in pad runs; None if no pad.
+    firmware: Arc<Mutex<Option<Firmware>>>,
+    /// Progress of a firmware install.
+    flashing: Arc<Mutex<Flashing>>,
+    /// The backlight as last set here.
+    backlight: Backlight,
+    /// When the backlight was last sent for preview, and whether it still has to be
+    /// saved on the pad once the change settles.
+    backlight_sent: Instant,
+    backlight_unsaved: Option<Instant>,
     message: String,
+}
+
+/// A firmware install running in the background, or its last result.
+#[derive(Clone, Default)]
+struct Flashing {
+    busy: bool,
+    text: String,
 }
 
 impl App {
@@ -558,11 +576,13 @@ impl App {
         });
 
         let service_status = Arc::new(Mutex::new(service::read_status()));
-        let (flag, status) = (daemon_running.clone(), service_status.clone());
+        let firmware = Arc::new(Mutex::new(pad::firmware()));
+        let (flag, status, fw) = (daemon_running.clone(), service_status.clone(), firmware.clone());
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_secs(2));
             flag.store(service::running(), Ordering::Relaxed);
             *status.lock().unwrap() = service::read_status();
+            *fw.lock().unwrap() = pad::firmware();
         });
 
         // Keep a login-item daemon in step with this app, then look for a newer release.
@@ -588,6 +608,11 @@ impl App {
             pad,
             daemon_running,
             service_status,
+            firmware,
+            flashing: Arc::new(Mutex::new(Flashing::default())),
+            backlight: Backlight::load(),
+            backlight_sent: Instant::now(),
+            backlight_unsaved: None,
             message,
         }
     }
@@ -910,6 +935,120 @@ impl App {
         }
     }
 
+    /// The pad's firmware, with updating or installing MiniMacPad's.
+    fn firmware_row(&mut self, ui: &mut egui::Ui, firmware: Option<Firmware>) {
+        let state = self.flashing.lock().unwrap().clone();
+        ui.horizontal_wrapped(|ui| {
+            ui.label(match firmware {
+                Some(Firmware::Own(v)) => format!("MiniMacPad firmware {}", pad::version_text(v)),
+                Some(Firmware::Original) => "The maker's original firmware".into(),
+                None if state.busy => "Being updated".into(),
+                None => "No pad plugged in".into(),
+            });
+            if state.busy {
+                ui.spinner();
+                return;
+            }
+            match firmware {
+                Some(fw) if fw.update_available() => {
+                    let label = format!("Update to {}", pad::version_text(pad::FIRMWARE_VERSION));
+                    if ui.add(primary(&label)).clicked() {
+                        self.install_firmware(fw, ui.ctx().clone());
+                    }
+                }
+                Some(Firmware::Original) => {
+                    if ui.button("Install MiniMacPad Firmware…").clicked() {
+                        self.install_firmware(Firmware::Original, ui.ctx().clone());
+                    }
+                }
+                _ => {}
+            }
+        });
+        if !state.text.is_empty() {
+            note(ui, state.text);
+        } else if firmware == Some(Firmware::Original) {
+            note(ui, "MiniMacPad's own firmware lets you set the backlight to any colour. \
+                Installing it replaces the maker's firmware for good, and the first time needs \
+                the pad opened: see the README.");
+        }
+    }
+
+    /// Install the bundled firmware in the background. Pads on MiniMacPad firmware 2.1 or
+    /// newer switch to flashing mode on request; others need a hand.
+    fn install_firmware(&self, current: Firmware, ctx: egui::Context) {
+        let state = self.flashing.clone();
+        let set = move |busy: bool, text: &str| {
+            *state.lock().unwrap() = Flashing { busy, text: text.into() };
+            ctx.request_repaint();
+        };
+        set(true, "Starting…");
+        std::thread::spawn(move || {
+            if pad::can_enter_flashing_mode(current) {
+                if let Err(e) = pad::enter_flashing_mode() {
+                    set(false, &format!("Could not start the update: {e}"));
+                    return;
+                }
+            } else if current.is_own() {
+                set(true, "Unplug the pad, then hold the knob down while plugging it back in.");
+            } else {
+                set(true, "Unplug the pad, then short the two SW2 pads on its board while plugging it back in.");
+            }
+            let hands_on = !pad::can_enter_flashing_mode(current);
+            let result = pad::flash(pad::FIRMWARE_HEX, Duration::from_secs(120), |step| {
+                // While waiting on the person, keep their instruction on screen.
+                if !(hands_on && step.starts_with("Waiting")) {
+                    set(true, step);
+                }
+            });
+            match result {
+                Ok(done) => set(false, &format!("{done}.")),
+                Err(e) => set(false, &format!("Update failed: {e}. The pad keeps working; try again.")),
+            }
+        });
+    }
+
+    /// Effect, colour and brightness for MiniMacPad firmware. Changes show at once;
+    /// the pad saves them once they settle.
+    fn backlight_controls(&mut self, ui: &mut egui::Ui) {
+        let mut light = self.backlight;
+        ui.horizontal_wrapped(|ui| {
+            egui::ComboBox::from_id_salt("backlight-effect")
+                .selected_text(light.effect.label())
+                .show_ui(ui, |ui| {
+                    for effect in Effect::ALL {
+                        ui.selectable_value(&mut light.effect, effect, effect.label());
+                    }
+                });
+            if matches!(light.effect, Effect::Solid | Effect::Press) {
+                ui.color_edit_button_srgb(&mut light.color);
+            }
+        });
+        if light.effect != Effect::Off {
+            ui.add(egui::Slider::new(&mut light.brightness, 0..=100).suffix("%").text("Brightness"));
+        }
+        if light != self.backlight {
+            self.backlight = light;
+            self.backlight_unsaved = Some(Instant::now());
+            if self.backlight_sent.elapsed() > Duration::from_millis(40) {
+                self.backlight_sent = Instant::now();
+                if let Err(e) = light.apply(false) {
+                    self.message = format!("Could not set the backlight: {e}");
+                }
+            }
+        }
+    }
+
+    /// Save a settled backlight change on the pad and in the app.
+    fn save_backlight(&mut self) {
+        if self.backlight_unsaved.is_some_and(|t| t.elapsed() > Duration::from_millis(600)) {
+            self.backlight_unsaved = None;
+            self.backlight.store();
+            if let Err(e) = self.backlight.apply(true) {
+                self.message = format!("Could not save the backlight on the pad: {e}");
+            }
+        }
+    }
+
     fn device_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new(RichText::new("Pad and Background Service").color(INK)).show(ui, |ui| {
             let pad = self.pad.load(Ordering::Relaxed);
@@ -961,22 +1100,33 @@ impl App {
                     self.service_blocked_notice(ui);
                 }
 
-                caption(ui, "Backlight");
-                ui.horizontal_wrapped(|ui| {
-                    for mode in 0..=2u8 {
-                        if ui.add_enabled(connected, egui::Button::new(format!("Mode {mode}"))).clicked() {
-                            self.report(&format!("Backlight mode {mode} sent"), flash::set_led(mode));
-                        }
-                    }
-                });
+                let firmware = *self.firmware.lock().unwrap();
+                caption(ui, "Pad firmware");
+                self.firmware_row(ui, firmware);
 
-                caption(ui, "Pad memory");
-                ui.horizontal_wrapped(|ui| {
-                    if ui.add_enabled(connected, egui::Button::new("Program Pad Again")).clicked() {
-                        self.report("Pad programmed", flash::run(&[]));
-                    }
-                    note(ui, "Only needed for a new or reset pad.");
-                });
+                if firmware.is_some_and(Firmware::is_own) {
+                    caption(ui, "Backlight");
+                    self.backlight_controls(ui);
+                } else {
+                    // The maker's firmware: its own backlight modes, and key codes that
+                    // have to be programmed into it.
+                    caption(ui, "Backlight");
+                    ui.horizontal_wrapped(|ui| {
+                        for mode in 0..=2u8 {
+                            if ui.add_enabled(connected, egui::Button::new(format!("Mode {mode}"))).clicked() {
+                                self.report(&format!("Backlight mode {mode} sent"), flash::set_led(mode));
+                            }
+                        }
+                    });
+
+                    caption(ui, "Pad memory");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.add_enabled(connected, egui::Button::new("Program Pad Again")).clicked() {
+                            self.report("Pad programmed", flash::run(&[]));
+                        }
+                        note(ui, "Only needed for a new or reset pad.");
+                    });
+                }
 
                 caption(ui, "Version");
                 ui.horizontal_wrapped(|ui| {
@@ -1036,6 +1186,7 @@ impl eframe::App for App {
             self.pressed = Some((control, Instant::now()));
         }
         self.pause_daemon(focused);
+        self.save_backlight();
         if self.pressed.as_ref().is_some_and(|(_, t)| t.elapsed() < Duration::from_millis(300)) {
             ctx.request_repaint_after(Duration::from_millis(60));
         }

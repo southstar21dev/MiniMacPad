@@ -5,6 +5,7 @@ pub mod config;
 pub mod device;
 pub mod flash;
 pub mod macos;
+pub mod pad;
 pub mod service;
 pub mod update;
 

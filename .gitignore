@@ -47,3 +47,4 @@ docs/specs/
 # semantic-release (.github/workflows/release.yml)
 .release-version
 release-assets/
+firmware/build/

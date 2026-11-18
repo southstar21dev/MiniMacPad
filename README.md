@@ -55,6 +55,23 @@ Other layouts that share the chip are not supported yet.
 
 Requires macOS 13 or newer on Apple silicon.
 
+## Pad firmware (optional)
+
+MiniMacPad can replace the pad's own firmware with its own, open-source one (in [`firmware/`](firmware)). With it, the backlight can be any colour, including white, set from **Pad and Background Service > Backlight** (solid, lit while pressed, or rainbow, at any brightness), and the pad needs no programming. The pad remembers the backlight after it is unplugged.
+
+Installing it replaces the maker's firmware for good: it cannot be read off the chip first, so there is no way back to it.
+
+**The first time** the pad has to be opened, because the maker's firmware cannot be told to accept new firmware over USB:
+
+1. Unplug the pad, remove the screws on its underside and lift off the bottom.
+2. In MiniMacPad, choose **Install MiniMacPad Firmware…** under **Pad firmware**.
+3. Touch the two small pads marked **SW2** (top left, next to the chip) together with tweezers or a bent paperclip, and plug the pad in while holding them. Let go after a few seconds; the app writes the firmware.
+4. Unplug the pad and plug it in again if it does not come back by itself.
+
+**After that**, updates need no hands: when MiniMacPad carries newer firmware, **Update to …** appears under **Pad firmware**. If an update is ever interrupted, hold the knob down while plugging the pad in (the keys turn blue) and update again.
+
+From the command line: `minipad firmware` shows the versions, `minipad firmware update` installs, and `minipad backlight solid ffffff 60%` sets the backlight.
+
 ## The config file
 
 Everything the app edits lives in `~/.config/minipad/config.toml`, and you can write it by hand. Saved changes apply on the next key press.
@@ -83,8 +100,8 @@ Building from source and the repository layout are in [CONTRIBUTING.md](CONTRIBU
 
 ## Acknowledgements
 
-The pad's programming protocol was worked out by the [ch57x-keyboard-tool](https://github.com/kriomant/ch57x-keyboard-tool) project. MiniMacPad is not affiliated with the pad's manufacturer or with any of the assistants it can prompt.
+The pad's programming protocol was worked out by the [ch57x-keyboard-tool](https://github.com/kriomant/ch57x-keyboard-tool) project. MiniMacPad's pad firmware is based on Stefan Wagner's [CH552 MacroPad plus](https://github.com/wagiminator/CH552-MacroPad-plus), and the app flashes it with [wchisp](https://github.com/ch32-rs/wchisp). MiniMacPad is not affiliated with the pad's manufacturer or with any of the assistants it can prompt.
 
 ## License
 
-MiniMacPad is free software under the [GNU General Public License v3.0](LICENSE).
+MiniMacPad is free software under the [GNU General Public License v3.0](LICENSE). The pad firmware in [`firmware/`](firmware) is under [CC BY-SA 3.0](firmware/LICENSE), like the project it is based on, and the bundled wchisp under GPL-2.0 (its license ships in the app).

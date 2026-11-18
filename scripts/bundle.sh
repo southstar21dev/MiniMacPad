@@ -19,6 +19,21 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/minipad-ui target/release/minipad "$APP/Contents/MacOS/"
 cp assets/MiniMacPad.icns "$APP/Contents/Resources/"
+
+# wchisp (GPL-2.0, https://github.com/ch32-rs/wchisp) flashes the pad's firmware. It runs
+# as a separate program, shipped with its license; install it with
+# `cargo install wchisp --version 0.3.0 --locked`.
+wchisp="$(command -v wchisp || echo "$HOME/.cargo/bin/wchisp")"
+if [ -x "$wchisp" ]; then
+  cp "$wchisp" "$APP/Contents/MacOS/wchisp"
+  license="$(ls -d "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/wchisp-*/LICENSE 2>/dev/null | tail -1)"
+  [ -n "$license" ] && cp "$license" "$APP/Contents/Resources/wchisp-LICENSE"
+elif [ -n "${MINIMACPAD_RELEASE_VERSION:-}" ]; then
+  echo "wchisp is missing: releases must carry it to update the pad's firmware" >&2
+  exit 1
+else
+  echo "wchisp not found: this build cannot update the pad's firmware"
+fi
 # CFBundleShortVersionString takes plain X.Y.Z only.
 short="${version%%[-+]*}"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -47,6 +62,10 @@ if security find-identity -p codesigning ${SIGNING_KEYCHAIN:+"$SIGNING_KEYCHAIN"
   # Inside out: the daemon is also copied out of the bundle to run as a login item.
   codesign --force --sign "$identity" ${keychain[@]+"${keychain[@]}"} \
     --identifier dev.southstar21.minimacpad.daemon "$APP/Contents/MacOS/minipad"
+  if [ -f "$APP/Contents/MacOS/wchisp" ]; then
+    codesign --force --sign "$identity" ${keychain[@]+"${keychain[@]}"} \
+      --identifier dev.southstar21.minimacpad.wchisp "$APP/Contents/MacOS/wchisp"
+  fi
   codesign --force --sign "$identity" ${keychain[@]+"${keychain[@]}"} "$APP"
   echo "signed with \"$identity\""
 else
